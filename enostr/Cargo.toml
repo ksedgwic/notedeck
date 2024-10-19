@@ -17,3 +17,4 @@ nostrdb = { git = "https://github.com/ksedgwic/nostrdb-rs.git", rev = "3c3ac0cba
 hex = "0.4.3"
 tracing = "0.1.40"
 env_logger = "0.11.1"
+url = "2.5.2"
