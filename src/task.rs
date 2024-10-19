@@ -34,7 +34,7 @@ pub async fn setup_user_relays(damusref: DamusRef) {
         let txn = Transaction::new(&damus.ndb).expect("transaction");
         let relays = query_nip65_relays(&damus.ndb, &txn, &filter);
         debug!("setup_user_relays: query #1 relays: {:#?}", relays);
-        add_relays(&mut damus.pool, relays);
+        set_relays(&mut damus.pool, relays);
 
         // Add a relay subscription to the pool
         dispatcher::subscribe(damus, &[filter.clone()], 10).expect("subscribe")
@@ -49,7 +49,7 @@ pub async fn setup_user_relays(damusref: DamusRef) {
                     let txn = Transaction::new(&damus.ndb).expect("transaction");
                     let relays = query_nip65_relays(&damus.ndb, &txn, &filter);
                     debug!("setup_user_relays: query #2 relays: {:#?}", relays);
-                    add_relays(&mut damus.pool, relays);
+                    set_relays(&mut damus.pool, relays);
                 })
             }
             None => {
@@ -93,13 +93,11 @@ fn query_nip65_relays(ndb: &Ndb, txn: &Transaction, filter: &Filter) -> Vec<Stri
         .collect()
 }
 
-fn add_relays(pool: &mut RelayPool, relays: Vec<String>) {
+fn set_relays(pool: &mut RelayPool, relays: Vec<String>) {
     let wakeup = move || {
         // FIXME - how do we repaint?
     };
-    for relay in relays {
-        if let Err(e) = pool.add_url(relay, wakeup) {
-            error!("{:?}", e)
-        }
+    if let Err(e) = pool.set_relays(&relays, wakeup) {
+        error!("{:?}", e)
     }
 }
