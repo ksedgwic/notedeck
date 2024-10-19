@@ -56,6 +56,9 @@ pub use profile::DisplayName;
 #[cfg(target_os = "android")]
 use winit::platform::android::EventLoopBuilderExtAndroid;
 
+#[cfg(target_os = "android")]
+use std::sync::{Arc, Mutex};
+
 pub type Result<T> = std::result::Result<T, error::Error>;
 
 //#[cfg(target_os = "android")]
@@ -85,7 +88,11 @@ pub async fn android_main(app: AndroidApp) {
     let _res = eframe::run_native(
         "Damus NoteDeck",
         options,
-        Box::new(move |cc| Ok(Box::new(Damus::new(cc, path, app_args)))),
+        Box::new(|cc| {
+            Ok(Box::new(DamusApp::new(Arc::new(Mutex::new(Damus::new(
+                cc, path, app_args,
+            ))))))
+        }),
     );
 }
 
