@@ -479,7 +479,7 @@ fn update_damus(damus: &mut Damus, ctx: &egui::Context) {
 
             let damusref = damus.reference();
             tokio::spawn(async move {
-                task::setup_user_relays(damusref).await;
+                task::track_user_relays(damusref).await;
             });
         }
 

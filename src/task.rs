@@ -8,12 +8,47 @@ use crate::dispatcher;
 use crate::note::NoteRef;
 use crate::{with_mut_damus, DamusRef};
 
-pub async fn setup_user_relays(damusref: DamusRef) {
-    debug!("do_setup_user_relays starting");
+pub async fn track_user_relays(damusref: DamusRef) {
+    debug!("track_user_relays starting");
 
-    let filter = with_mut_damus(&damusref, |damus| {
-        debug!("setup_user_relays: acquired damus for filter");
+    let filter = user_relay_filter(&damusref);
 
+    // Do we have a user relay list stored in nostrdb? Start with that ...
+    with_mut_damus(&damusref, |damus| {
+        let txn = Transaction::new(&damus.ndb).expect("transaction");
+        let relays = query_nip65_relays(&damus.ndb, &txn, &filter);
+        debug!("track_user_relays: initial from nostrdb: {:#?}", relays);
+        set_relays(&mut damus.pool, relays);
+    });
+
+    // Subscribe to user relay list updates
+    let mut sub = with_mut_damus(&damusref, |damus| {
+        dispatcher::subscribe(damus, &[filter.clone()], 10).expect("subscribe")
+    });
+    debug!("track_user_relays: sub {}", sub.id);
+
+    // Track user relay list updates
+    loop {
+        match sub.receiver.next().await {
+            Some(_ev) => with_mut_damus(&damusref, |damus| {
+                let txn = Transaction::new(&damus.ndb).expect("transaction");
+                let relays = query_nip65_relays(&damus.ndb, &txn, &filter);
+                debug!("track_user_relays update: {:#?}", relays);
+                set_relays(&mut damus.pool, relays);
+            }),
+            None => {
+                debug!("track_user_relays: saw None");
+                break;
+            }
+        }
+    }
+
+    // Should only get here if the channel is closed
+    debug!("track_user_relays finished");
+}
+
+fn user_relay_filter(damusref: &DamusRef) -> Filter {
+    with_mut_damus(&damusref, |damus| {
         let account = damus
             .accounts
             .get_selected_account()
@@ -27,41 +62,10 @@ pub async fn setup_user_relays(damusref: DamusRef) {
             .kinds([10002])
             .limit(1)
             .build()
-    });
-
-    let mut sub = with_mut_damus(&damusref, |damus| {
-        debug!("setup_user_relays: acquired damus for query + subscribe");
-        let txn = Transaction::new(&damus.ndb).expect("transaction");
-        let relays = query_nip65_relays(&damus.ndb, &txn, &filter);
-        debug!("setup_user_relays: query #1 relays: {:#?}", relays);
-        set_relays(&mut damus.pool, relays);
-
-        // Add a relay subscription to the pool
-        dispatcher::subscribe(damus, &[filter.clone()], 10).expect("subscribe")
-    });
-    debug!("setup_user_relays: sub {}", sub.id);
-
-    loop {
-        match sub.receiver.next().await {
-            Some(ev) => {
-                debug!("setup_user_relays: saw {:?}", ev);
-                with_mut_damus(&damusref, |damus| {
-                    let txn = Transaction::new(&damus.ndb).expect("transaction");
-                    let relays = query_nip65_relays(&damus.ndb, &txn, &filter);
-                    debug!("setup_user_relays: query #2 relays: {:#?}", relays);
-                    set_relays(&mut damus.pool, relays);
-                })
-            }
-            None => {
-                debug!("setup_user_relays: saw None");
-                break;
-            }
-        }
-    }
-
-    debug!("do_setup_user_relays finished");
+    })
 }
 
+// useful for debugging
 fn _query_note_json(ndb: &Ndb, txn: &Transaction, filter: &Filter) -> Vec<String> {
     let lim = filter.limit().unwrap_or(crate::filter::default_limit()) as i32;
     let results = ndb
