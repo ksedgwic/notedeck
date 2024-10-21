@@ -11,7 +11,7 @@ use url::Url;
 use ewebsock::{WsEvent, WsMessage};
 
 #[cfg(not(target_arch = "wasm32"))]
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub struct PoolEvent<'a> {
@@ -186,6 +186,14 @@ impl RelayPool {
             .iter()
             .map(|pr| pr.relay.url.clone())
             .collect::<HashSet<_>>();
+
+        debug!("old relays: {:?}", old_urls);
+        debug!("new relays: {:?}", new_urls);
+
+        if new_urls.len() == 0 {
+            info!("bootstrapping, not clearing the relay list ...");
+            return Ok(());
+        }
 
         // Remove the relays that are in old_urls but not in new_urls.
         let to_remove: HashSet<_> = old_urls.difference(&new_urls).cloned().collect();
