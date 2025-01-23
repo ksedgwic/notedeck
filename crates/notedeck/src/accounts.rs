@@ -475,7 +475,8 @@ impl Accounts {
         }
     }
 
-    // Returns added and removed accounts
+    // Return accounts which have no account_data yet (added) and accounts
+    // which have still data but are no longer in our account list (removed).
     fn delta_accounts(&self) -> (Vec<[u8; 32]>, Vec<[u8; 32]>) {
         let mut added = Vec::new();
         for pubkey in self.accounts.iter().map(|a| a.pubkey.bytes()) {
@@ -546,8 +547,9 @@ impl Accounts {
         wakeup: impl Fn() + Send + Sync + Clone + 'static,
     ) {
         debug!(
-            "updating relay configuration for currently selected account {:?}",
+            "updating relay configuration for currently selected {:?}",
             self.currently_selected_account
+                .map(|i| hex::encode(self.accounts.get(i).unwrap().pubkey.bytes()))
         );
 
         // If forced relays are set use them only
@@ -599,7 +601,7 @@ impl Accounts {
         // make sure it is fast when idle
 
         // On the initial update the relays need config even if nothing changes below
-        let mut relays_changed = self.needs_relay_config;
+        let mut need_reconfig = self.needs_relay_config;
 
         let ctx2 = ctx.clone();
         let wakeup = move || {
@@ -610,18 +612,18 @@ impl Accounts {
         let (added, removed) = self.delta_accounts();
         for pk in added {
             self.handle_added_account(ndb, pool, &pk);
-            relays_changed = true;
+            need_reconfig = true;
         }
         for pk in removed {
             self.handle_removed_account(&pk);
-            relays_changed = true;
+            need_reconfig = true;
         }
 
         // Did any accounts receive updates (ie NIP-65 relay lists)
-        relays_changed = self.poll_for_updates(ndb) || relays_changed;
+        need_reconfig = self.poll_for_updates(ndb) || need_reconfig;
 
         // If needed, update the relay configuration
-        if relays_changed {
+        if need_reconfig {
             self.update_relay_configuration(pool, wakeup);
             self.needs_relay_config = false;
         }
