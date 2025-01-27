@@ -192,8 +192,8 @@ mod tests {
             .top()
             .timeline_id();
 
-        assert_eq!(tl1.is_some(), true);
-        assert_eq!(tl2.is_some(), true);
+        assert!(tl1.is_some());
+        assert!(tl2.is_some());
 
         let timelines = app.columns(app_ctx.accounts).timelines();
         assert!(timelines[0].kind.is_notifications());
