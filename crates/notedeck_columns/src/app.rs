@@ -13,9 +13,12 @@ use crate::{
     Result,
 };
 
-use notedeck::{Accounts, AppContext, DataPath, DataPathType, FilterState, ImageCache, UnknownIds};
+use notedeck::{
+    Accounts, AppContext, DataPath, DataPathType, FilterState, ImageCache, SubError, SubMan,
+    UnknownIds,
+};
 
-use enostr::{ClientMessage, Keypair, PoolRelay, Pubkey, RelayEvent, RelayMessage, RelayPool};
+use enostr::{ClientMessage, Keypair, PoolRelay, Pubkey, RelayEvent, RelayMessage};
 use uuid::Uuid;
 
 use egui_extras::{Size, StripBuilder};
@@ -157,22 +160,41 @@ fn try_process_event(
     }
 
     if app_ctx.unknown_ids.ready_to_send() {
-        unknown_id_send(app_ctx.unknown_ids, app_ctx.subman.pool());
+        unknown_id_send(app_ctx.unknown_ids, app_ctx.subman);
     }
 
     Ok(())
 }
 
-fn unknown_id_send(unknown_ids: &mut UnknownIds, pool: &mut RelayPool) {
-    debug!("unknown_id_send called on: {:?}", &unknown_ids);
-    let filter = unknown_ids.filter().expect("filter");
-    info!(
-        "Getting {} unknown ids from relays",
-        unknown_ids.ids_iter().len()
-    );
-    let msg = ClientMessage::req("unknownids".to_string(), filter);
+fn unknown_id_send(unknown_ids: &mut UnknownIds, subman: &mut SubMan) {
+    info!("Getting {} unknown ids from relays", &unknown_ids.numids());
+    for subspec in unknown_ids.generate_resolution_requests() {
+        debug!("unknown_ids subscribe: {:?}", subspec);
+        match subman.subscribe(subspec) {
+            Err(err) => error!("unknown_id_send subscribe failed: {:?}", err),
+            Ok(mut rcvr) => {
+                tokio::spawn(async move {
+                    loop {
+                        match rcvr.next().await {
+                            Err(SubError::StreamEnded) => {
+                                debug!("unknown_id_send: rtmtid {} complete", rcvr.rmtid());
+                                break;
+                            }
+                            Err(err) => {
+                                error!("unknown_id_send: rmtid {}: error: {:?}", rcvr.rmtid(), err);
+                                break;
+                            }
+                            Ok(note_keys) => {
+                                debug!("received note keys: {:?}", note_keys);
+                                // only need the prefetch into ndb, all done
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
     unknown_ids.clear();
-    pool.send(&msg);
 }
 
 fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Context) {
@@ -233,7 +255,7 @@ fn handle_eose(
             );
             // this is possible if this is the first time
             if ctx.unknown_ids.ready_to_send() {
-                unknown_id_send(ctx.unknown_ids, ctx.subman.pool());
+                unknown_id_send(ctx.unknown_ids, ctx.subman);
             }
         }
 
