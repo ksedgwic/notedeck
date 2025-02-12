@@ -93,12 +93,12 @@ fn try_process_event(
         ctx2.request_repaint();
     };
 
-    app_ctx.pool.keepalive_ping(wakeup);
+    app_ctx.subman.pool().keepalive_ping(wakeup);
 
     // NOTE: we don't use the while let loop due to borrow issues
     #[allow(clippy::while_let_loop)]
     loop {
-        let ev = if let Some(ev) = app_ctx.pool.try_recv() {
+        let ev = if let Some(ev) = app_ctx.subman.pool().try_recv() {
             ev.into_owned()
         } else {
             break;
@@ -108,14 +108,14 @@ fn try_process_event(
             RelayEvent::Opened => {
                 app_ctx
                     .accounts
-                    .send_initial_filters(app_ctx.pool, &ev.relay);
+                    .send_initial_filters(app_ctx.subman.pool(), &ev.relay);
 
                 timeline::send_initial_timeline_filters(
                     app_ctx.ndb,
                     damus.since_optimize,
                     &mut damus.timeline_cache,
                     &mut damus.subscriptions,
-                    app_ctx.pool,
+                    app_ctx.subman.pool(),
                     &ev.relay,
                 );
             }
@@ -130,8 +130,12 @@ fn try_process_event(
     }
 
     for (_kind, timeline) in damus.timeline_cache.timelines.iter_mut() {
-        let is_ready =
-            timeline::is_timeline_ready(app_ctx.ndb, app_ctx.pool, app_ctx.note_cache, timeline);
+        let is_ready = timeline::is_timeline_ready(
+            app_ctx.ndb,
+            app_ctx.subman.pool(),
+            app_ctx.note_cache,
+            timeline,
+        );
 
         if is_ready {
             let txn = Transaction::new(app_ctx.ndb).expect("txn");
@@ -153,7 +157,7 @@ fn try_process_event(
     }
 
     if app_ctx.unknown_ids.ready_to_send() {
-        unknown_id_send(app_ctx.unknown_ids, app_ctx.pool);
+        unknown_id_send(app_ctx.unknown_ids, app_ctx.subman.pool());
     }
 
     Ok(())
@@ -229,14 +233,14 @@ fn handle_eose(
             );
             // this is possible if this is the first time
             if ctx.unknown_ids.ready_to_send() {
-                unknown_id_send(ctx.unknown_ids, ctx.pool);
+                unknown_id_send(ctx.unknown_ids, ctx.subman.pool());
             }
         }
 
         // oneshot subs just close when they're done
         SubKind::OneShot => {
             let msg = ClientMessage::close(subid.to_string());
-            ctx.pool.send_to(&msg, relay_url);
+            ctx.subman.pool().send_to(&msg, relay_url);
         }
 
         SubKind::FetchingContactList(timeline_uid) => {
@@ -287,12 +291,13 @@ fn handle_eose(
 fn process_message(damus: &mut Damus, ctx: &mut AppContext<'_>, relay: &str, msg: &RelayMessage) {
     match msg {
         RelayMessage::Event(_subid, ev) => {
-            let relay = if let Some(relay) = ctx.pool.relays.iter().find(|r| r.url() == relay) {
-                relay
-            } else {
-                error!("couldn't find relay {} for note processing!?", relay);
-                return;
-            };
+            let relay =
+                if let Some(relay) = ctx.subman.pool().relays.iter().find(|r| r.url() == relay) {
+                    relay
+                } else {
+                    error!("couldn't find relay {} for note processing!?", relay);
+                    return;
+                };
 
             match relay {
                 PoolRelay::Websocket(_) => {
@@ -387,7 +392,7 @@ impl Damus {
                     &txn,
                     ctx.ndb,
                     ctx.note_cache,
-                    ctx.pool,
+                    ctx.subman.pool(),
                     &timeline_kind,
                 ) {
                     add_result.process(
