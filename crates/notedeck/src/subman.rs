@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::{cell::RefCell, cmp::Ordering, rc::Rc};
 use thiserror::Error;
+use tracing::{error, info, trace, warn};
 use uuid::Uuid;
 
-use enostr::{Filter, RelayPool};
+use enostr::{Filter, PoolRelay, RelayEvent, RelayMessage, RelayPool};
 use nostrdb::{self, Ndb, Subscription, SubscriptionStream};
 
 /// The Subscription Manager
@@ -292,6 +293,84 @@ impl SubMan {
 
         Ok((maybe_tx_eose, SubReceiver { lclsub, rmtsub }))
     }
+
+    pub fn process_relays<H: LegacyRelayHandler>(
+        &mut self,
+        legacy_relay_handler: &mut H,
+    ) -> SubResult<()> {
+        let wakeup = move || {
+            // ignore
+        };
+        self.pool.keepalive_ping(wakeup);
+
+        // NOTE: we don't use the while let loop due to borrow issues
+        #[allow(clippy::while_let_loop)]
+        loop {
+            let ev = if let Some(ev) = self.pool.try_recv() {
+                ev.into_owned()
+            } else {
+                break;
+            };
+
+            match (&ev.event).into() {
+                RelayEvent::Opened => {
+                    legacy_relay_handler.handle_opened(&ev.relay);
+                }
+                // TODO: handle reconnects
+                RelayEvent::Closed => warn!("{} connection closed", &ev.relay),
+                RelayEvent::Error(e) => error!("{}: {}", &ev.relay, e),
+                RelayEvent::Other(msg) => trace!("other event {:?}", &msg),
+                RelayEvent::Message(msg) => {
+                    self.process_message(legacy_relay_handler, &ev.relay, &msg);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn process_message<H: LegacyRelayHandler>(
+        &mut self,
+        legacy_relay_handler: &mut H,
+        relay: &str,
+        msg: &RelayMessage,
+    ) {
+        match msg {
+            RelayMessage::Event(_subid, ev) => {
+                let relay = if let Some(relay) = self.pool.relays.iter().find(|r| r.url() == relay)
+                {
+                    relay
+                } else {
+                    error!("couldn't find relay {} for note processing!?", relay);
+                    return;
+                };
+
+                match relay {
+                    PoolRelay::Websocket(_) => {
+                        //info!("processing event {}", event);
+                        if let Err(err) = self.ndb.process_event(ev) {
+                            error!("error processing event {ev}: {err}");
+                        }
+                    }
+                    PoolRelay::Multicast(_) => {
+                        // multicast events are client events
+                        if let Err(err) = self.ndb.process_client_event(ev) {
+                            error!("error processing multicast event {ev}: {err}");
+                        }
+                    }
+                }
+            }
+            RelayMessage::Notice(msg) => warn!("Notice from {}: {}", relay, msg),
+            RelayMessage::OK(cr) => info!("OK {:?}", cr),
+            RelayMessage::Eose(sid) => {
+                legacy_relay_handler.handle_eose(sid, relay);
+            }
+        }
+    }
+}
+
+pub trait LegacyRelayHandler {
+    fn handle_opened(&mut self, relay: &str);
+    fn handle_eose(&mut self, sid: &str, relay: &str);
 }
 
 struct LclSub {
@@ -359,9 +438,9 @@ impl SubReceiver {
             // only remote sub (prefetch only, values not returned)
             match rsub.rmteose.next().await {
                 Some(_) => Err(SubError::StreamEnded),
-                None => Err(SubError::InternalError(format!(
-                    "trouble reading from rmteose"
-                ))),
+                None => Err(SubError::InternalError(
+                    "trouble reading from rmteose".to_string(),
+                )),
             }
         } else {
             // query case
