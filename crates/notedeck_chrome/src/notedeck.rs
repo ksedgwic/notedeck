@@ -7,6 +7,15 @@ use notedeck_columns::Damus;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(feature = "heapmon")]
+use heapmon::{HeapMon, SummaryOrder};
+#[cfg(feature = "heapmon")]
+use std::alloc::System;
+
+#[cfg(feature = "heapmon")]
+#[global_allocator]
+pub static HEAPMON: HeapMon<System> = HeapMon::system();
+
 // Entry point for wasm
 //#[cfg(target_arch = "wasm32")]
 //use wasm_bindgen::prelude::*;
@@ -66,6 +75,11 @@ fn setup_logging(path: &DataPath) -> Option<WorkerGuard> {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() {
+    #[cfg(feature = "heapmon")]
+    const CONTROL_PATH: &str = "./heapmon.ctl";
+    #[cfg(feature = "heapmon")]
+    heapmon::watch(CONTROL_PATH, &HEAPMON, SummaryOrder::MemoryUsed);
+
     let base_path = DataPath::default_base_or_cwd();
     let path = DataPath::new(base_path.clone());
 
