@@ -106,10 +106,13 @@ impl<'a> RelayView<'a> {
                         });
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add(delete_button(ui.visuals().dark_mode)).clicked() {
-                                relay_to_remove = Some(relay_info.relay_url.to_string());
-                            };
-
+                            if self.accounts.is_account_relay(relay_info.relay_url) {
+                                if ui.add(delete_button(ui.visuals().dark_mode)).clicked() {
+                                    relay_to_remove = Some(relay_info.relay_url.to_string());
+                                };
+                            } else {
+                                ui.add_space(16.0);
+                            }
                             show_connection_status(ui, relay_info.status);
                         });
                     });
